@@ -1,13 +1,16 @@
-import { AppBar, Box, Button, Toolbar } from '@mui/material';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppBar, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, TextField, Toolbar } from '@mui/material';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Application, Container, Sprite, Text, Texture, Graphics, Color, utils } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 
 // @ts-ignore
 import PptxGenJS from 'pptxgenjs';
+import { saveAs } from 'file-saver';
 
 export default function App() {
+  const [loading, showLoading] = useState(false);
   const [data, setData] = useState<any | null>();
+  const [binder, showBinder] = useState<any | null>();
 
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -23,12 +26,12 @@ export default function App() {
   }, [wrapperRef, app])
 
   const viewport = useMemo(() => {
-    if (!app)
+    if (!app || !wrapperRef.current)
       return;
 
     const viewport = new Viewport({
-      screenWidth: window.innerWidth,
-      screenHeight: window.innerHeight,
+      screenWidth: wrapperRef.current.offsetWidth,
+      screenHeight: wrapperRef.current.offsetHeight,
       worldWidth: 1000,
       worldHeight: 1000,
       events: app.renderer.events
@@ -44,7 +47,21 @@ export default function App() {
       .decelerate()
 
     return viewport;
-  }, [app])
+  }, [app, wrapperRef.current])
+
+  const cursor = useMemo(() => {
+    if (!viewport)
+      return;
+
+    const cursor = new Graphics();
+    cursor.beginFill(0x000000, 0.5);
+    cursor.drawRect(0, 0, 1, 1);
+    cursor.endFill();
+
+    viewport.addChild(cursor);
+
+    return cursor;
+  }, [viewport])
 
   useEffect(() => {
     if (viewport && data) {
@@ -64,12 +81,15 @@ export default function App() {
           if (!element.position)
             return;
 
+          const container = new Container();
+          container.x = element.position.x;
+          container.y = element.position.y;
+          page.addChild(container);
+
           const instance = new Graphics();
-          instance.x = element.position.x;
-          instance.y = element.position.y;
           instance.width = element.size.width;
           instance.height = element.size.height;
-          page.addChild(instance);
+          container.addChild(instance);
 
           if (element.fillColor) {
             instance.beginFill(element.fillColor);
@@ -86,13 +106,27 @@ export default function App() {
                   fill: textRun.color,
                 });
 
-                instance.x = element.position.x + left;
-                instance.y = element.position.y;
+                instance.x = left;
 
-                page.addChild(instance);
+                container.addChild(instance);
 
                 left += instance.width;
               })
+            })
+
+            container.interactive = true;
+            container.on('pointerdown', () => {
+              if (!cursor)
+                return;
+
+              cursor.removeFromParent();
+              page.addChild(cursor);
+
+              cursor.x = container.x;
+              cursor.y = container.y;
+              cursor.width = container.width;
+              cursor.height = container.height;
+
             })
           } else if (element.rows) {
             let rowTop = 0;
@@ -117,6 +151,20 @@ export default function App() {
 
                   container.addChild(bg);
                 }
+
+                container.interactive = true;
+                container.on('pointerdown', () => {
+                  if (!cursor)
+                    return;
+
+                  cursor.removeFromParent();
+                  page.addChild(cursor);
+
+                  cursor.x = container.x;
+                  cursor.y = container.y;
+                  cursor.width = container.width;
+                  cursor.height = container.height;
+                })
 
                 let top = 0;
                 cell.paragraphs?.forEach((paragraph: any) => {
@@ -165,26 +213,95 @@ export default function App() {
               if (!file)
                 return;
 
-              const formData = new FormData();
-              formData.append('file', file);
+              try {
+                showLoading(true);
 
-              const res = await fetch('https://proposal-generator-server.herokuapp.com/api/upload', {
-                method: 'POST',
-                body: formData,
-              })
+                const formData = new FormData();
+                formData.append('file', file);
 
-              const json = await res.json();
-              setData(json);
+                const res = await fetch('https://proposal-generator-server.herokuapp.com/api/upload', {
+                  method: 'POST',
+                  body: formData,
+                })
+
+                const json = await res.json();
+                setData(json);
+              } catch (e) {
+                window.alert(e);
+              } finally {
+                showLoading(false);
+              }
             }
             fileInput.click();
           }}>Add New Template</Button>
-          <Button variant='outlined'>Load Sample Template</Button>
+          <Button variant='outlined' onClick={() => showBinder(true)}>Export with binding data</Button>
         </Toolbar>
       </AppBar>
 
-      <Box position='relative' flex='1'>
-        <Box ref={wrapperRef} position='absolute' sx={{ inset: 0 }} />
+      <Box flex='1' display='flex' flexDirection='row'>
+        <Box width={160}>
+
+        </Box>
+        <Box position='relative' flex='1'>
+          <Box ref={wrapperRef} position='absolute' sx={{ inset: 0 }} />
+        </Box>
       </Box>
+
+      <Dialog open={binder} onClose={() => showBinder(false)}>
+        <Box component='form' onSubmit={async (e: FormEvent) => {
+          e.preventDefault();
+
+          try {
+            showLoading(true);
+
+            const pptx = new PptxGenJS();
+            pptx.defineSlideMaster({
+              title: 'MASTER_SLIDE',
+              bkgd: 'ffffff',
+              objects: [
+                { rect: { x: 0, y: 0, w: '100%', h: '100%', fill: { color: 'f1f1f1' } } },
+                { image: { x: 0.5, y: 0.5, w: 0.5, h: 0.5, path: 'https://raw.githubusercontent.com/gitbrent/PptxGenJS/master/docs/images/logo.png' } },
+                { text: { text: 'PptxGenJS', options: { x: 0.5, y: 1.5, w: 10, h: 1, fontFace: 'Arial', fontSize: 18, color: '363636', bold: true } } },
+                { text: { text: 'https://gitbrent.github.io/PptxGenJS/', options: { x: 0.5, y: 2.5, w: 10, h: 1, fontFace: 'Arial', fontSize: 14, color: '363636', bold: true } } },
+              ]
+            });
+            
+            const slide = pptx.addSlide('MASTER_SLIDE');
+            slide.addText('Hello World!', { x: 0.5, y: 0.5, w: 10, h: 1, fontFace: 'Arial', fontSize: 18, color: '363636', bold: true });
+            slide.addTable
+
+            const blob = await pptx.writeFile();
+            saveAs(blob, 'test.pptx');
+            
+          } catch (e) {
+            window.alert(e);
+          } finally {
+            showLoading(false);
+          }
+        }}>
+          <DialogTitle>Export with binding data</DialogTitle>
+          <DialogContent>
+            <TextField
+              name='bindingData'
+              label='Binding data'
+              multiline
+              rows={20}
+              fullWidth
+              sx={{
+                width: '50vw',
+                height: '50vh',
+              }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => showBinder(false)}>Cancel</Button>
+            <Button type='submit'>Export</Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
+      <Dialog open={loading} PaperComponent={Box}>
+        <CircularProgress />
+      </Dialog>
     </>
   );
 }
