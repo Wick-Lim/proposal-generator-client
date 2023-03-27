@@ -12264,8 +12264,9 @@ export default function App() {
               }
             }
 
-            const blob = await pptx.writeFile();
-            // console.log(blob)
+            await pptx.writeFile({
+              fileName: 'test.pptx',
+            });
           } catch (e) {
             console.log(e)
           } finally {
